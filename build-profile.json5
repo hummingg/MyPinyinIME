@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/hummingg/.ohos/config/default_MyPinyinIME_qo6ILXe7hTMke8udDfEsk721XSYv3mxG4w8FtjJszgU=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B61811E5553E80BA9C804FF304329A8D703F3DCF39C1F79B032664E2D9AE1361C470DFBF6651623",
+          "profile": "/Users/hummingg/.ohos/config/default_MyPinyinIME_qo6ILXe7hTMke8udDfEsk721XSYv3mxG4w8FtjJszgU=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/hummingg/.ohos/config/default_MyPinyinIME_qo6ILXe7hTMke8udDfEsk721XSYv3mxG4w8FtjJszgU=.p12",
+          "storePassword": "0000001BEFDC01F045A0107F4D337A367FDD1F2D36DDDAA1B685077A4C407EA1EBDED45A72E552088BC80C"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.1(24)",
+        "compatibleSdkVersion": "6.1.1(24)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

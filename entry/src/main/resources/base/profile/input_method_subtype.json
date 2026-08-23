@@ -1,0 +1,11 @@
+{
+  "subtypes": [
+    {
+      "id": "subtype_zh_cn",
+      "label": "$string:InputMethodService_label",
+      "locale": "zh-CN",
+      "language": "zh",
+      "icon": "$media:startIcon"
+    }
+  ]
+}
