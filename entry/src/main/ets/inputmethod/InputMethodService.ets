@@ -4,6 +4,7 @@ import { InputMethodExtensionAbility, inputMethodEngine } from '@kit.IMEKit';
 import { Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import display from '@ohos.display';
+import { initRimeDict } from '../pinyin/Dictionary';
 
 const DOMAIN = 0x0500;
 const TAG = 'InputMethodService';
@@ -21,6 +22,9 @@ export default class InputMethodService extends InputMethodExtensionAbility {
 
   onCreate(want: Want): void {
     hilog.info(DOMAIN, TAG, 'onCreate');
+
+    // 后台加载 rime 词库（不阻塞 onCreate）
+    initRimeDict(this.context);
 
     // 输入开始：保存客户端引用，创建并显示键盘面板
     this.ability.on('inputStart', (kbController: inputMethodEngine.KeyboardController,
