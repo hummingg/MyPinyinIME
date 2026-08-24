@@ -1,5 +1,9 @@
 // 九宫格键盘页面（输入法面板内容）
-// 第二阶段：数字序列 → 拼音解析 → 候选词 → 上屏
+// 布局对齐小艺输入法：
+//   ，  1  2  3  删除
+//   。  4  5  6  清空
+//   ？  7  8  9  ⏎
+//   符号 中/英 0 123
 import { ImeState } from '../inputmethod/InputMethodService';
 import { generateCandidates } from '../pinyin/Dictionary';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -11,59 +15,111 @@ const TAG = 'KeyboardPage';
 @Component
 struct KeyboardPage {
   @State isChinese: boolean = true;
-  @State isFullWidth: boolean = false;
   @State inputDigits: string = '';
   @State candidates: string[] = [];
-  private puncts: string[] = ['，', '。', '！', '？', '、', '…', '：', '；', '（', '）', '【', '】', '“', '”'];
-  private keys: Array<[string, string]> = [
-    ['1', ''], ['2', 'abc'], ['3', 'def'],
-    ['4', 'ghi'], ['5', 'jkl'], ['6', 'mno'],
-    ['7', 'pqrs'], ['8', 'tuv'], ['9', 'wxyz'],
-    ['*', ''], ['0', ''], ['#', '']
-  ];
   private englishFirst: Record<string, string> = {
     '2': 'a', '3': 'd', '4': 'g', '5': 'j', '6': 'm', '7': 'p', '8': 't', '9': 'w'
   };
+  // 主键盘三行：[label, sub, action]
+  private kbRows: Array<Array<[string, string, string]>> = [
+    [['，', '', 'punct'], ['1', '', 'digit'], ['2', 'abc', 'digit'], ['3', 'def', 'digit'], ['删除', '', 'delete']],
+    [['。', '', 'punct'], ['4', 'ghi', 'digit'], ['5', 'jkl', 'digit'], ['6', 'mno', 'digit'], ['清空', '', 'clear']],
+    [['？', '', 'punct'], ['7', 'pqrs', 'digit'], ['8', 'tuv', 'digit'], ['9', 'wxyz', 'digit'], ['⏎', '', 'enter']]
+  ];
+  private symbols: string[] = ['～', '·', '°', '±', '×', '÷', '√', '≈', '≠', '≤', '≥', '《', '》', '「', '」', '『', '』', '〔', '〕', '‰', '℃', '￥', '＄', '€', '§', '★', '○', '●', '◇', '◆', '□', '■', '△', '▲', '※', '→', '←', '↑', '↓', '⇒', '⇔', '∈', '∏', '∑', '∞', '∠', '⊥', '⊕', '⊗'];
 
   private commitText(text: string): void {
     const client = ImeState.inputClient;
     if (client !== null) {
-      client.insertText(text).then((ok: boolean) => {
-        hilog.info(DOMAIN, TAG, 'insertText ok=%{public}d', ok ? 1 : 0);
-      }).catch((e: object) => {
-        hilog.error(DOMAIN, TAG, 'insertText failed: %{public}s', JSON.stringify(e));
-      });
-    } else {
-      hilog.warn(DOMAIN, TAG, 'inputClient is null');
+      try {
+        client.insertTextSync(text);
+        hilog.info(DOMAIN, TAG, 'insertTextSync ok');
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'insertTextSync failed: %{public}s', JSON.stringify(e));
+      }
     }
   }
 
   private deleteBackward(): void {
     const client = ImeState.inputClient;
     if (client !== null) {
-      client.deleteBackward(1).catch((e: object) => {
-        hilog.error(DOMAIN, TAG, 'deleteBackward failed: %{public}s', JSON.stringify(e));
-      });
+      try {
+        client.deleteForwardSync(1);
+        hilog.info(DOMAIN, TAG, 'deleteForwardSync ok');
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'deleteForwardSync failed: %{public}s', JSON.stringify(e));
+      }
+    } else {
+      hilog.warn(DOMAIN, TAG, 'deleteBackward: inputClient null');
     }
   }
 
-  private onDigitKey(key: [string, string]): void {
-    const d = key[0];
+  // 清空输入框中光标前的全部已提交文本
+  private clearAllInputText(): void {
+    const client = ImeState.inputClient;
+    if (client !== null) {
+      // 先尝试获取光标前文本长度，失败则用固定上限循环退格
+      let len = 0;
+      try {
+        const text = client.getForwardSync(1024);
+        len = text.length;
+        hilog.info(DOMAIN, TAG, 'clearAllInputText getForwardSync len=%{public}d', len);
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'clearAllInputText getForwardSync failed: %{public}s', JSON.stringify(e));
+      }
+      if (len <= 0) {
+        len = 64; // 获取失败时退格上限
+      }
+      let deleted = 0;
+      for (let i = 0; i < len; i++) {
+        try {
+          client.deleteForwardSync(1);
+          deleted++;
+        } catch (e) {
+          break; // 没有更多字符可删
+        }
+      }
+      hilog.info(DOMAIN, TAG, 'clearAllInputText deleted %{public}d chars', deleted);
+    } else {
+      hilog.warn(DOMAIN, TAG, 'clearAllInputText: inputClient null');
+    }
+  }
+
+  // 按键动作分发
+  private onKey(action: string, label: string): void {
+    switch (action) {
+      case 'punct':
+        this.commitText(label);
+        break;
+      case 'digit':
+        this.onDigit(label);
+        break;
+      case 'delete':
+        this.onDelete();
+        break;
+      case 'clear':
+        if (this.inputDigits.length > 0) {
+          this.inputDigits = '';
+          this.candidates = [];
+        } else {
+          this.clearAllInputText();
+        }
+        break;
+      case 'enter':
+        this.commitText('\n');
+        break;
+      default:
+        break;
+    }
+  }
+
+  private onDigit(d: string): void {
     if (this.isChinese) {
       if (d >= '2' && d <= '9') {
         this.inputDigits += d;
         this.candidates = generateCandidates(this.inputDigits);
-      } else if (d === '1') {
-        this.inputDigits = '';
-        this.candidates = this.puncts.slice();
-      } else if (d === '0') {
-        this.commitText(' ');
-      } else if (d === '*') {
-        this.isChinese = false;
-        this.inputDigits = '';
-        this.candidates = [];
-      } else if (d === '#') {
-        this.isFullWidth = !this.isFullWidth;
+      } else {
+        this.commitText(d);
       }
     } else {
       if (d >= '2' && d <= '9') {
@@ -71,14 +127,6 @@ struct KeyboardPage {
         if (ch !== undefined) {
           this.commitText(ch);
         }
-      } else if (d === '0') {
-        this.commitText(' ');
-      } else if (d === '*') {
-        this.isChinese = true;
-        this.inputDigits = '';
-        this.candidates = [];
-      } else if (d === '#') {
-        this.isFullWidth = !this.isFullWidth;
       } else {
         this.commitText(d);
       }
@@ -108,6 +156,22 @@ struct KeyboardPage {
     }
   }
 
+  private onSymbol(): void {
+    this.inputDigits = '';
+    this.candidates = this.symbols.slice();
+  }
+
+  private onLangSwitch(): void {
+    this.isChinese = !this.isChinese;
+    this.inputDigits = '';
+    this.candidates = [];
+  }
+
+  private onNumSwitch(): void {
+    this.inputDigits = '';
+    this.candidates = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+  }
+
   build() {
     Column() {
       // 候选栏：拼音序列 + 候选词水平滚动
@@ -129,7 +193,7 @@ struct KeyboardPage {
               .onClick(() => this.onCandidateClick(word))
           }, (word: string) => word)
           if (this.inputDigits.length === 0 && this.candidates.length === 0) {
-            Text(this.isChinese ? (this.isFullWidth ? '九宫格拼音 · 全角' : '九宫格拼音 · 半角') : '英文模式')
+            Text(this.isChinese ? '九宫格拼音 · 输入数字' : '英文模式')
               .fontSize(14)
               .fontColor('#AAAAAA')
               .padding({ left: 12 })
@@ -145,62 +209,64 @@ struct KeyboardPage {
       .height(40)
       .backgroundColor('#F5F5F5')
 
-      // 九宫格按键区
-      Grid() {
-        ForEach(this.keys, (item: [string, string]) => {
-          GridItem() {
+      // 主键盘三行（每行5键）
+      ForEach(this.kbRows, (row: Array<[string, string, string]>) => {
+        Row() {
+          ForEach(row, (key: [string, string, string]) => {
             Column() {
-              Text(item[0])
-                .fontSize(22)
+              Text(key[0])
+                .fontSize(key[2] === 'punct' || key[2] === 'delete' || key[2] === 'clear' || key[2] === 'enter' ? 18 : 22)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#222222')
-              if (item[1].length > 0) {
-                Text(item[1])
+              if (key[1].length > 0) {
+                Text(key[1])
                   .fontSize(10)
                   .fontColor('#999999')
                   .margin({ top: 2 })
               }
             }
-            .width('100%')
+            .layoutWeight(1)
             .height('100%')
             .justifyContent(FlexAlign.Center)
-            .onClick(() => this.onDigitKey(item))
-          }
-        }, (item: [string, string]) => item[0])
-      }
-      .columnsTemplate('1fr 1fr 1fr')
-      .rowsTemplate('1fr 1fr 1fr 1fr')
-      .width('100%')
-      .layoutWeight(1)
-      .backgroundColor('#FFFFFF')
+            .backgroundColor(key[2] === 'punct' ? '#F9F9F9' : '#FFFFFF')
+            .onClick(() => this.onKey(key[2], key[0]))
+          }, (key: [string, string, string]) => key[0])
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }, (row: Array<[string, string, string]>) => row[0][0])
 
-      // 底部功能栏
+      // 底部功能栏：符号 中/英 0 123
       Row() {
+        Text('符号')
+          .layoutWeight(1)
+          .height(44)
+          .textAlign(TextAlign.Center)
+          .fontSize(15)
+          .backgroundColor('#EEEEEE')
+          .onClick(() => this.onSymbol())
         Text(this.isChinese ? '中' : 'A')
-          .width('20%')
+          .layoutWeight(1)
           .height(44)
           .textAlign(TextAlign.Center)
           .fontSize(16)
           .backgroundColor('#EEEEEE')
-          .onClick(() => {
-            this.isChinese = !this.isChinese;
-            this.inputDigits = '';
-            this.candidates = [];
-          })
-        Text('空格')
-          .width('50%')
+          .onClick(() => this.onLangSwitch())
+        Text('0')
+          .layoutWeight(1)
           .height(44)
           .textAlign(TextAlign.Center)
-          .fontSize(15)
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
           .backgroundColor('#F5F5F5')
           .onClick(() => this.onSpace())
-        Text('删除')
-          .width('30%')
+        Text('123')
+          .layoutWeight(1)
           .height(44)
           .textAlign(TextAlign.Center)
           .fontSize(15)
           .backgroundColor('#EEEEEE')
-          .onClick(() => this.onDelete())
+          .onClick(() => this.onNumSwitch())
       }
       .width('100%')
       .height(44)
