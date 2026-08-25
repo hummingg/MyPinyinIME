@@ -1,6 +1,6 @@
 // 输入法扩展服务（InputMethodExtensionAbility）
 // 第一阶段：验证 IME Kit 接入、面板创建与测试上屏通路
-import { InputMethodExtensionAbility, inputMethodEngine } from '@kit.IMEKit';
+import { InputMethodExtensionAbility, InputMethodExtensionContext, inputMethodEngine } from '@kit.IMEKit';
 import { Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import display from '@ohos.display';
@@ -15,6 +15,7 @@ export class ImeState {
   static inputClient: inputMethodEngine.InputClient | null = null;
   static kbController: inputMethodEngine.KeyboardController | null = null;
   static panel: inputMethodEngine.Panel | null = null;
+  static context: InputMethodExtensionContext | null = null;
 }
 
 export default class InputMethodService extends InputMethodExtensionAbility {
@@ -22,6 +23,7 @@ export default class InputMethodService extends InputMethodExtensionAbility {
 
   onCreate(want: Want): void {
     hilog.info(DOMAIN, TAG, 'onCreate');
+    ImeState.context = this.context;
 
     // 后台加载 rime 词库（不阻塞 onCreate）
     initRimeDict(this.context);
@@ -97,5 +99,6 @@ export default class InputMethodService extends InputMethodExtensionAbility {
     ImeState.inputClient = null;
     ImeState.kbController = null;
     ImeState.panel = null;
+    ImeState.context = null;
   }
 }

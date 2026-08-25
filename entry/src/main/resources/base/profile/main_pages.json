@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
-    "pages/KeyboardPage"
+    "pages/KeyboardPage",
+    "pages/EmojiSavePage"
   ]
 }

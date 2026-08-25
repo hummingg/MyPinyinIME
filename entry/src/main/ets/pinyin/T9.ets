@@ -65,6 +65,10 @@ function splitDigits(digits: string, pos: number, cur: string[], out: string[][]
     const syls = digitsToSyllables.get(code);
     if (syls !== undefined) {
       for (const syl of syls) {
+        // 跳过单字母音节（a, o, e），避免方案爆炸挤出合理切分
+        if (syl.length === 1) {
+          continue;
+        }
         cur.push(syl);
         splitDigits(digits, pos + len, cur, out, maxOut);
         cur.pop();

@@ -5,10 +5,16 @@
 //   ？  7  8  9  ⏎
 //   符号 中/英 0 123
 import { ImeState } from '../inputmethod/InputMethodService';
-import { generateCandidates, recordUserWord } from '../pinyin/Dictionary';
-import { digitsToPinyins } from '../pinyin/T9';
+import { generateCandidates, recordUserWord, bestPinyin } from '../pinyin/Dictionary';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import display from '@ohos.display';
+import image from '@ohos.multimedia.image';
+
+import { common, Want } from '@kit.AbilityKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { preferences } from '@kit.ArkData';
+import fs from '@ohos.file.fs';
+import { buffer } from '@kit.ArkTS';
 
 const DOMAIN = 0x0500;
 const TAG = 'KeyboardPage';
@@ -26,6 +32,13 @@ struct KeyboardPage {
   // 符号面板状态
   @State showSymbolPanel: boolean = false;
   @State symbolPage: number = 0;
+  // 表情图状态
+  @State emojiTemplate: number = 0;
+  @State emojiGenerating: boolean = false;
+  @State emojiToast: string = '';
+  @State userTemplates: string[] = [];
+  @State committedText: string = '';  // 已上屏文字
+  @State emojiResultPath: string = '';  // 生成图片文件路径
   private touchStartX: number = 0;
   private readonly pickerCellWidth: number = 13;
   private readonly pickerRenderWidth: number = 28;
@@ -41,22 +54,23 @@ struct KeyboardPage {
     [['？', '', 'punct'], ['7', 'pqrs', 'digit'], ['8', 'tuv', 'digit'], ['9', 'wxyz', 'digit'], ['⏎', '', 'enter']]
   ];
   // 符号分页：标点 / 数学 / 特殊，每页30个（6列×5行）
-  private symbolPages: Array<Array<string>> = [
+private symbolPages: Array<Array<string>> = [
     ['，', '。', '？', '！', '、', '；', '：', '"', '"', '\'', '\'', '（', '）', '【', '】', '《', '》', '「', '」', '『', '』', '…', '—', '～', '·', '°', '％', '＆', '＊', '＠'],
     ['＋', '－', '×', '÷', '＝', '±', '≈', '≠', '≤', '≥', '√', '∑', '∏', '∞', '∠', '⊥', 'π', '‰', '℃', '∫', '∂', '∇', '∝', '≡', '∈', '∪', '∩', '⊕', '⊗', '∀'],
     ['￥', '＄', '€', '￡', '¥', '§', '★', '○', '●', '◇', '◆', '□', '■', '△', '▲', '※', '→', '←', '↑', '↓', '⇒', '⇔', '∃', '∅', '∴', '∵', '⊕', '⊗', '∩', '∪']
   ];
-  // 英文标点（半角）
   private enPunctuation: string[] = [',', '.', '?', '!', ';', ':', '\'', '"', '(', ')', '[', ']', '{', '}', '<', '>', '/', '\\', '|', '-', '_', '+', '=', '*', '&', '%', '$', '#', '@', '~'];
-  private symbolPageNames: string[] = ['标点', '数学', '特殊'];
+  private symbolPageNames: string[] = ['标点', '数学', '特殊', '表情'];
+  private emojiTemplates: string[] = ['tpl_white.png', 'tpl_yellow.png', 'tpl_blue_grad.png', 'tpl_pink_grad.png', 'tpl_dark.png', 'tpl_green_grad.png'];
+  private emojiCanvasCtx: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
 
-  // 当前符号页数据（标点页根据中英文模式切换全角/半角）
   private currentSymbolPage(): string[] {
     if (this.symbolPage === 0) {
       return this.isChinese ? this.symbolPages[0] : this.enPunctuation;
     }
     return this.symbolPages[this.symbolPage];
   }
+
 
   // 生成滑动选择字符列表：数字 + 小写字母 + 大写字母
   private getPickerChars(d: string): string[] {
@@ -79,8 +93,7 @@ struct KeyboardPage {
     if (this.inputDigits.length === 0) {
       return '';
     }
-    const pys = digitsToPinyins(this.inputDigits);
-    return pys.length > 0 ? pys.slice(0, 4).join('  ') : this.inputDigits;
+    return bestPinyin(this.inputDigits);
   }
 
   private commitText(text: string): void {
@@ -234,6 +247,263 @@ struct KeyboardPage {
 
   private onSymbolBack(): void {
     this.showSymbolPanel = false;
+  }
+
+  private onSymbolPageChange(idx: number): void {
+    this.symbolPage = idx;
+    if (idx === 3) {
+      this.loadUserTemplates();
+      this.loadCommittedText();
+    }
+  }
+
+  private async loadUserTemplates(): Promise<void> {
+    try {
+      const context = getContext(this) as common.Context;
+      const store = await preferences.getPreferences(context, 'emoji_templates');
+      const raw = await store.get('list', '[]') as string;
+      const arr: Object[] = JSON.parse(raw) as Object[];
+      this.userTemplates = arr.map((v: Object) => v as string);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'load user templates failed');
+    }
+  }
+
+  private async onEmojiAddTemplate(): Promise<void> {
+    try {
+      const picker = new photoAccessHelper.PhotoViewPicker();
+      const options: photoAccessHelper.BaseSelectOptions = { maxSelectNumber: 1 };
+      const result = await picker.select(options);
+      if (result.photoUris.length === 0) {
+        return;
+      }
+      const srcUri = result.photoUris[0];
+      const context = getContext(this) as common.Context;
+      const dir = context.filesDir + '/emoji_templates';
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir, true);
+      }
+      const fileName = 'user_' + Date.now() + '.png';
+      const dstPath = dir + '/' + fileName;
+      const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+      const dstFile = fs.openSync(dstPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      const buf = new ArrayBuffer(4096);
+      while (true) {
+        const len = fs.readSync(srcFile.fd, buf);
+        if (len <= 0) break;
+        fs.writeSync(dstFile.fd, buf, { length: len });
+      }
+      fs.closeSync(srcFile);
+      fs.closeSync(dstFile);
+      this.userTemplates.push(dstPath);
+      const store = await preferences.getPreferences(context, 'emoji_templates');
+      await store.put('list', JSON.stringify(this.userTemplates));
+      await store.flush();
+      this.emojiToast = '模板已添加';
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'add template failed');
+      this.emojiToast = '添加失败';
+    }
+  }
+
+  private async onEmojiDeleteTemplate(idx: number): Promise<void> {
+    const userIdx = idx - this.emojiTemplates.length;
+    if (userIdx < 0 || userIdx >= this.userTemplates.length) {
+      return;
+    }
+    try {
+      const path = this.userTemplates[userIdx];
+      if (fs.accessSync(path)) {
+        fs.unlinkSync(path);
+      }
+      this.userTemplates.splice(userIdx, 1);
+      const context = getContext(this) as common.Context;
+      const store = await preferences.getPreferences(context, 'emoji_templates');
+      await store.put('list', JSON.stringify(this.userTemplates));
+      await store.flush();
+      this.emojiTemplate = 0;
+      this.emojiToast = '模板已删除';
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'delete template failed');
+    }
+  }
+
+  private async onEmojiCanvasReady(): Promise<void> {
+    await this.loadCommittedText();
+    await this.drawEmoji();
+  }
+
+  // 从输入框读取已上屏的文字
+  private async loadCommittedText(): Promise<void> {
+    const client = ImeState.inputClient;
+    if (client !== null) {
+      try {
+        const text = client.getForwardSync(1024);
+        this.committedText = text !== null ? text : '';
+        hilog.info(DOMAIN, TAG, 'loadCommittedText: %{public}s', this.committedText);
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'loadCommittedText failed: %{public}s', JSON.stringify(e));
+        this.committedText = '';
+      }
+    } else {
+      this.committedText = '';
+    }
+  }
+
+  private async drawEmoji(): Promise<void> {
+    const ctx = this.emojiCanvasCtx;
+    ctx.clearRect(0, 0, 160, 160);
+    try {
+      let pixelMap: image.PixelMap | null = null;
+      if (this.emojiTemplate < this.emojiTemplates.length) {
+        const context = getContext(this) as common.Context;
+        const tplFile = this.emojiTemplates[this.emojiTemplate];
+        const data = await context.resourceManager.getRawFileContent('emoji_templates/' + tplFile);
+        const source = image.createImageSource(data.buffer);
+        const opts: image.DecodingOptions = {
+          editable: false,
+          desiredSize: { width: 160, height: 160 }
+        };
+        pixelMap = await source.createPixelMap(opts);
+        source.release();
+      } else {
+        const userIdx = this.emojiTemplate - this.emojiTemplates.length;
+        if (userIdx >= 0 && userIdx < this.userTemplates.length) {
+          const path = this.userTemplates[userIdx];
+          const source = image.createImageSource(path);
+          const opts: image.DecodingOptions = {
+            editable: false,
+            desiredSize: { width: 160, height: 160 }
+          };
+          pixelMap = await source.createPixelMap(opts);
+          source.release();
+        }
+      }
+      if (pixelMap !== null) {
+        ctx.drawImage(pixelMap, 0, 0, 160, 160);
+      }
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, 'drawEmoji template failed: %{public}s', JSON.stringify(e));
+    }
+    if (this.committedText.length > 0) {
+      ctx.fillStyle = '#000000';
+      ctx.font = '20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(this.committedText, 80, 90);
+    }
+  }
+
+  private async onEmojiGenerate(): Promise<void> {
+    this.emojiGenerating = true;
+    this.emojiToast = '生成中...';
+    try {
+      hilog.info(DOMAIN, TAG, 'onEmojiGenerate start, committedText=%{public}s', this.committedText);
+      await this.loadCommittedText();
+      hilog.info(DOMAIN, TAG, 'after loadCommittedText, text=%{public}s', this.committedText);
+      await this.drawEmoji();
+      hilog.info(DOMAIN, TAG, 'after drawEmoji');
+
+      // 从 Canvas 获取像素数据并创建 PixelMap
+      const ctx = this.emojiCanvasCtx;
+      const imageData = ctx.getImageData(0, 0, 160, 160);
+      const imgW = imageData.width;
+      const imgH = imageData.height;
+      hilog.info(DOMAIN, TAG, 'after getImageData, w=%{public}d h=%{public}d size=%{public}d', imgW, imgH, imageData.data.byteLength);
+
+      const indepBuf = new ArrayBuffer(imageData.data.byteLength);
+      new Uint8Array(indepBuf).set(imageData.data);
+      const opts: image.InitializationOptions = {
+        editable: true,
+        pixelFormat: image.PixelMapFormat.RGBA_8888,
+        size: { width: imgW, height: imgH }
+      };
+      const pixelMap = await image.createPixelMap(indepBuf, opts);
+      hilog.info(DOMAIN, TAG, 'after createPixelMap');
+
+      // 编码为 PNG 并保存到应用沙盒
+      const imagePacker = image.createImagePacker();
+      const packOpts: image.PackingOption = { format: 'image/png', quality: 100 };
+      const pngData = await imagePacker.packing(pixelMap, packOpts);
+      imagePacker.release();
+      pixelMap.release();
+      hilog.info(DOMAIN, TAG, 'after packing, size=%{public}d', pngData.byteLength);
+
+      const context = getContext(this) as common.Context;
+      const outDir = context.filesDir + '/emoji_output';
+      if (!fs.accessSync(outDir)) {
+        fs.mkdirSync(outDir, true);
+      }
+      const outPath = outDir + '/emoji_' + Date.now() + '.png';
+      const f = fs.openSync(outPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+      fs.writeSync(f.fd, pngData);
+      fs.closeSync(f);
+      hilog.info(DOMAIN, TAG, 'after save file: %{public}s', outPath);
+      this.emojiResultPath = outPath;
+
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'emoji generate failed: %{public}s', String(e));
+      this.emojiToast = '生成失败';
+    }
+    this.emojiGenerating = false;
+  }
+
+  // SaveButton 点击后临时授权，把沙盒 PNG 写入系统图库
+  private async saveEmojiToGallery(): Promise<void> {
+    if (this.emojiResultPath.length === 0 || !fs.accessSync(this.emojiResultPath)) {
+      this.emojiToast = '请先生成图片';
+      return;
+    }
+    try {
+      const context = getContext(this) as common.Context;
+      const helper = photoAccessHelper.getPhotoAccessHelper(context);
+      const uri = await helper.createAsset(photoAccessHelper.PhotoType.IMAGE, 'png');
+      hilog.info(DOMAIN, TAG, 'createAsset uri=%{public}s', uri);
+      const srcFile = fs.openSync(this.emojiResultPath, fs.OpenMode.READ_ONLY);
+      const dstFile = fs.openSync(uri, fs.OpenMode.WRITE_ONLY);
+      const buf = new ArrayBuffer(4096);
+      let readLen = fs.readSync(srcFile.fd, buf);
+      while (readLen > 0) {
+        fs.writeSync(dstFile.fd, buf, { length: readLen });
+        readLen = fs.readSync(srcFile.fd, buf);
+      }
+      fs.closeSync(srcFile);
+      fs.closeSync(dstFile);
+      this.emojiToast = '已保存到图库，可在聊天里发送';
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'saveEmojiToGallery failed: %{public}s', String(e));
+      this.emojiToast = '保存图库失败';
+    }
+  }
+
+  // 生成图片后启动主 EntryAbility 代理写剪贴板（扩展进程被 SELinux 隔离无法直接写）
+  private async onEmojiGenerateAndCopy(): Promise<void> {
+    this.emojiToast = '生成中...';
+    await this.onEmojiGenerate();
+    if (this.emojiResultPath.length === 0) {
+      return;
+    }
+    try {
+      const file = fs.openSync(this.emojiResultPath, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(this.emojiResultPath);
+      const buf = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buf);
+      fs.closeSync(file);
+      const base64Str = buffer.from(buf).toString('base64');
+      hilog.info(DOMAIN, TAG, 'base64 len=%{public}d', base64Str.length);
+      const want: Want = {
+        bundleName: 'com.hummingg.mypinyinime',
+        abilityName: 'EntryAbility',
+        action: 'copy_emoji',
+        parameters: { emojiBase64: base64Str }
+      };
+      await ImeState.context?.startAbility(want);
+      this.clearAllInputText();
+      this.committedText = '';
+      this.emojiToast = '已存图库，点+号发图';
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'startAbility failed: %{public}s', String(e));
+      this.emojiToast = '复制失败';
+    }
   }
 
   private onLangSwitch(): void {
@@ -445,7 +715,7 @@ struct KeyboardPage {
               .fontSize(15)
               .fontColor(idx === this.symbolPage ? '#1A73E8' : '#666666')
               .backgroundColor(idx === this.symbolPage ? '#E8F0FE' : '#EEEEEE')
-              .onClick(() => this.symbolPage = idx)
+              .onClick(() => this.onSymbolPageChange(idx))
           }, (name: string, idx: number) => `${name}${idx}`)
           Text('返回')
             .layoutWeight(1)
@@ -458,22 +728,112 @@ struct KeyboardPage {
         .width('100%')
         .height(44)
 
-        Grid() {
-          ForEach(this.currentSymbolPage(), (s: string, idx: number) => {
-            GridItem() {
-              Text(s)
-                .fontSize(20)
-                .fontColor('#222222')
-                .textAlign(TextAlign.Center)
+        if (this.symbolPage < 3) {
+          Grid() {
+            ForEach(this.currentSymbolPage(), (s: string, idx: number) => {
+              GridItem() {
+                Text(s)
+                  .fontSize(20)
+                  .fontColor('#222222')
+                  .textAlign(TextAlign.Center)
+              }
+              .backgroundColor('#FFFFFF')
+              .onClick(() => this.onSymbolClick(s))
+            }, (s: string, idx: number) => `${s}${idx}`)
+          }
+          .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr')
+          .rowsTemplate('1fr 1fr 1fr 1fr 1fr')
+          .width('100%')
+          .layoutWeight(1)
+        } else {
+          Column() {
+            List() {
+              ListItem() {
+                Row() {
+                  ForEach(this.emojiTemplates, (tpl: string, idx: number) => {
+                    Image($rawfile('emoji_templates/' + tpl))
+                      .width(36)
+                      .height(36)
+                      .border({ width: idx === this.emojiTemplate ? 2 : 0, color: '#1A73E8' })
+                      .margin({ left: 3, right: 3 })
+                      .onClick(() => {
+                        this.emojiTemplate = idx;
+                        this.drawEmoji();
+                      })
+                  }, (tpl: string) => tpl)
+                  ForEach(this.userTemplates, (path: string, uIdx: number) => {
+                    Image('file://' + path)
+                      .width(36)
+                      .height(36)
+                      .border({ width: this.emojiTemplates.length + uIdx === this.emojiTemplate ? 2 : 0, color: '#1A73E8' })
+                      .margin({ left: 3, right: 3 })
+                      .onClick(() => {
+                        this.emojiTemplate = this.emojiTemplates.length + uIdx;
+                        this.drawEmoji();
+                      })
+                      .bindMenu([{
+                        value: '删除',
+                        action: (): void => { this.onEmojiDeleteTemplate(this.emojiTemplates.length + uIdx); }
+                      }])
+                  }, (path: string) => path)
+                  Text('+')
+                    .width(36)
+                    .height(36)
+                    .fontSize(22)
+                    .fontColor('#1A73E8')
+                    .textAlign(TextAlign.Center)
+                    .backgroundColor('#F0F0F0')
+                    .borderRadius(4)
+                    .margin({ left: 3, right: 3 })
+                    .onClick(() => this.onEmojiAddTemplate())
+                }
+                .height(48)
+              }
             }
-            .backgroundColor('#FFFFFF')
-            .onClick(() => this.onSymbolClick(s))
-          }, (s: string, idx: number) => `${s}${idx}`)
+            .listDirection(Axis.Horizontal)
+            .scrollBar(BarState.Off)
+            .width('100%')
+            .height(48)
+
+            Row() {
+              Text(this.committedText.length > 0 ? this.committedText : '（无已上屏文字）')
+                .layoutWeight(3)
+                .height(40)
+                .fontSize(15)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .padding({ left: 8, right: 8 })
+                .backgroundColor('#F5F5F5')
+                .borderRadius(4)
+              Button('生成存图库')
+                .layoutWeight(2)
+                .height(40)
+                .fontSize(14)
+                .enabled(this.committedText.length > 0 && !this.emojiGenerating)
+                .onClick(() => this.onEmojiGenerateAndCopy())
+            }
+            .width('100%')
+            .height(44)
+
+            Canvas(this.emojiCanvasCtx)
+              .id('emojiCanvas')
+              .width(160)
+              .height(160)
+              .backgroundColor('#F0F0F0')
+              .onReady(() => this.onEmojiCanvasReady())
+
+            if (this.emojiToast.length > 0) {
+              Text(this.emojiToast)
+                .fontSize(13)
+                .fontColor('#1A73E8')
+                .margin({ top: 4 })
+            }
+
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
         }
-        .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr')
-        .rowsTemplate('1fr 1fr 1fr 1fr 1fr')
-        .width('100%')
-        .layoutWeight(1)
       }
     }
     .width('100%')

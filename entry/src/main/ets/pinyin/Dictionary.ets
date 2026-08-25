@@ -3,7 +3,7 @@
 // 兜底词库：内置手写词，rime 加载前/失败时使用
 import { digitsToPinyins, digitsToSyllablePlans } from './T9';
 import { common } from '@kit.AbilityKit';
-import buffer from '@ohos.buffer';
+import { buffer } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { preferences } from '@kit.ArkData';
 
@@ -104,7 +104,7 @@ async function loadUserFreq(context: common.Context): Promise<void> {
     }
     hilog.info(DOMAIN, TAG, 'user freq loaded, words=%{public}d', userFreqMap.size);
   } catch (e) {
-    hilog.warn(DOMAIN, TAG, 'load user freq failed: %{public}s', JSON.stringify(e));
+    hilog.warn(DOMAIN, TAG, 'load user freq failed');
   }
 }
 
@@ -234,4 +234,29 @@ export function generateCandidates(digits: string): string[] {
     return fb - fa;
   });
   return words;
+}
+
+// 数字序列 → 最优拼音显示（优先词库有匹配且词频最高的）
+export function bestPinyin(digits: string): string {
+  if (digits.length === 0) {
+    return '';
+  }
+  const pys = digitsToPinyins(digits);
+  if (pys.length === 0) {
+    return digits;
+  }
+  let best: string = pys[0];
+  let bestFreq: number = -1;
+  for (const py of pys) {
+    const key = py.replace(/'/g, '');
+    const arr = lookup(key);
+    if (arr !== null && arr.length > 0) {
+      const freq = arr[0].freq;
+      if (freq > bestFreq) {
+        bestFreq = freq;
+        best = py;
+      }
+    }
+  }
+  return best;
 }

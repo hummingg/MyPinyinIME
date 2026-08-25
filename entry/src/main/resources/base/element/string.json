@@ -15,6 +15,10 @@
     {
       "name": "InputMethodService_label",
       "value": "MyPinyinIME 九宫格拼音"
+    },
+    {
+      "name": "permission_write_image_reason",
+      "value": "保存生成的表情图片到相册"
     }
   ]
 }
