@@ -15,6 +15,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { preferences } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import { buffer } from '@kit.ArkTS';
+import { commonEventManager } from '@kit.BasicServicesKit';
 
 const DOMAIN = 0x0500;
 const TAG = 'KeyboardPage';
@@ -260,48 +261,65 @@ private symbolPages: Array<Array<string>> = [
   private async loadUserTemplates(): Promise<void> {
     try {
       const context = getContext(this) as common.Context;
-      const store = await preferences.getPreferences(context, 'emoji_templates');
-      const raw = await store.get('list', '[]') as string;
-      const arr: Object[] = JSON.parse(raw) as Object[];
-      this.userTemplates = arr.map((v: Object) => v as string);
+      const dir = context.filesDir + '/emoji_templates';
+      if (!fs.accessSync(dir)) {
+        this.userTemplates = [];
+        return;
+      }
+      const files = fs.listFileSync(dir);
+      this.userTemplates = files.filter((name: string) => name.startsWith('user_')).map((name: string) => dir + '/' + name);
+      hilog.info(DOMAIN, TAG, 'loadUserTemplates count=%{public}d', this.userTemplates.length);
     } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'load user templates failed');
+      hilog.warn(DOMAIN, TAG, 'load user templates failed: %{public}s', String(e));
     }
   }
 
-  private async onEmojiAddTemplate(): Promise<void> {
-    try {
-      const picker = new photoAccessHelper.PhotoViewPicker();
-      const options: photoAccessHelper.BaseSelectOptions = { maxSelectNumber: 1 };
-      const result = await picker.select(options);
-      if (result.photoUris.length === 0) {
+  private async subscribeTemplateAdded(): Promise<void> {
+    const subscriber = await commonEventManager.createSubscriber({ events: ['emoji_template_added'] });
+    hilog.info(DOMAIN, TAG, 'subscribeTemplateAdded subscriber created');
+    commonEventManager.subscribe(subscriber, (err: Object, data: commonEventManager.CommonEventData) => {
+      if (err) {
+        hilog.error(DOMAIN, TAG, 'subscribe err: %{public}s', JSON.stringify(err));
         return;
       }
-      const srcUri = result.photoUris[0];
-      const context = getContext(this) as common.Context;
-      const dir = context.filesDir + '/emoji_templates';
-      if (!fs.accessSync(dir)) {
-        fs.mkdirSync(dir, true);
+      hilog.info(DOMAIN, TAG, 'received emoji_template_added');
+      const base64Str = data.data;
+      if (!base64Str || base64Str.length === 0) {
+        hilog.warn(DOMAIN, TAG, 'no templateBase64 in event');
+        return;
       }
-      const fileName = 'user_' + Date.now() + '.png';
-      const dstPath = dir + '/' + fileName;
-      const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
-      const dstFile = fs.openSync(dstPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      const buf = new ArrayBuffer(4096);
-      while (true) {
-        const len = fs.readSync(srcFile.fd, buf);
-        if (len <= 0) break;
-        fs.writeSync(dstFile.fd, buf, { length: len });
+      try {
+        const context = getContext(this) as common.Context;
+        const dir = context.filesDir + '/emoji_templates';
+        if (!fs.accessSync(dir)) {
+          fs.mkdirSync(dir, true);
+        }
+        const dstPath = dir + '/user_' + Date.now() + '.png';
+        const buf = buffer.from(base64Str, 'base64').buffer;
+        const f = fs.openSync(dstPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
+        fs.writeSync(f.fd, buf);
+        fs.closeSync(f);
+        hilog.info(DOMAIN, TAG, 'saved template to %{public}s', dstPath);
+        this.loadUserTemplates();
+        this.emojiToast = '模板已添加';
+      } catch (e) {
+        hilog.error(DOMAIN, TAG, 'save template failed: %{public}s', String(e));
       }
-      fs.closeSync(srcFile);
-      fs.closeSync(dstFile);
-      this.userTemplates.push(dstPath);
-      const store = await preferences.getPreferences(context, 'emoji_templates');
-      await store.put('list', JSON.stringify(this.userTemplates));
-      await store.flush();
-      this.emojiToast = '模板已添加';
+    });
+  }
+
+  private async onEmojiAddTemplate(): Promise<void> {
+    hilog.info(DOMAIN, TAG, 'onEmojiAddTemplate start');
+    try {
+      const want: Want = {
+        bundleName: 'com.hummingg.mypinyinime',
+        abilityName: 'EntryAbility',
+        action: 'add_template',
+      };
+      await ImeState.context?.startAbility(want);
+      hilog.info(DOMAIN, TAG, 'add_template startAbility done');
     } catch (e) {
-      hilog.error(DOMAIN, TAG, 'add template failed');
+      hilog.error(DOMAIN, TAG, 'add template failed: %{public}s', String(e));
       this.emojiToast = '添加失败';
     }
   }
@@ -317,18 +335,15 @@ private symbolPages: Array<Array<string>> = [
         fs.unlinkSync(path);
       }
       this.userTemplates.splice(userIdx, 1);
-      const context = getContext(this) as common.Context;
-      const store = await preferences.getPreferences(context, 'emoji_templates');
-      await store.put('list', JSON.stringify(this.userTemplates));
-      await store.flush();
       this.emojiTemplate = 0;
       this.emojiToast = '模板已删除';
     } catch (e) {
-      hilog.warn(DOMAIN, TAG, 'delete template failed');
+      hilog.warn(DOMAIN, TAG, 'delete template failed: %{public}s', String(e));
     }
   }
 
   private async onEmojiCanvasReady(): Promise<void> {
+    this.subscribeTemplateAdded();
     await this.loadCommittedText();
     await this.drawEmoji();
   }
@@ -477,32 +492,22 @@ private symbolPages: Array<Array<string>> = [
 
   // 生成图片后启动主 EntryAbility 代理写剪贴板（扩展进程被 SELinux 隔离无法直接写）
   private async onEmojiGenerateAndCopy(): Promise<void> {
-    this.emojiToast = '生成中...';
-    await this.onEmojiGenerate();
-    if (this.emojiResultPath.length === 0) {
+    await this.loadCommittedText();
+    if (this.committedText.length === 0) {
       return;
     }
     try {
-      const file = fs.openSync(this.emojiResultPath, fs.OpenMode.READ_ONLY);
-      const stat = fs.statSync(this.emojiResultPath);
-      const buf = new ArrayBuffer(stat.size);
-      fs.readSync(file.fd, buf);
-      fs.closeSync(file);
-      const base64Str = buffer.from(buf).toString('base64');
-      hilog.info(DOMAIN, TAG, 'base64 len=%{public}d', base64Str.length);
       const want: Want = {
         bundleName: 'com.hummingg.mypinyinime',
         abilityName: 'EntryAbility',
-        action: 'copy_emoji',
-        parameters: { emojiBase64: base64Str }
+        action: 'generate_emoji',
+        parameters: { emojiText: this.committedText }
       };
       await ImeState.context?.startAbility(want);
       this.clearAllInputText();
       this.committedText = '';
-      this.emojiToast = '已存图库，点+号发图';
     } catch (e) {
       hilog.error(DOMAIN, TAG, 'startAbility failed: %{public}s', String(e));
-      this.emojiToast = '复制失败';
     }
   }
 
@@ -747,88 +752,21 @@ private symbolPages: Array<Array<string>> = [
           .layoutWeight(1)
         } else {
           Column() {
-            List() {
-              ListItem() {
-                Row() {
-                  ForEach(this.emojiTemplates, (tpl: string, idx: number) => {
-                    Image($rawfile('emoji_templates/' + tpl))
-                      .width(36)
-                      .height(36)
-                      .border({ width: idx === this.emojiTemplate ? 2 : 0, color: '#1A73E8' })
-                      .margin({ left: 3, right: 3 })
-                      .onClick(() => {
-                        this.emojiTemplate = idx;
-                        this.drawEmoji();
-                      })
-                  }, (tpl: string) => tpl)
-                  ForEach(this.userTemplates, (path: string, uIdx: number) => {
-                    Image('file://' + path)
-                      .width(36)
-                      .height(36)
-                      .border({ width: this.emojiTemplates.length + uIdx === this.emojiTemplate ? 2 : 0, color: '#1A73E8' })
-                      .margin({ left: 3, right: 3 })
-                      .onClick(() => {
-                        this.emojiTemplate = this.emojiTemplates.length + uIdx;
-                        this.drawEmoji();
-                      })
-                      .bindMenu([{
-                        value: '删除',
-                        action: (): void => { this.onEmojiDeleteTemplate(this.emojiTemplates.length + uIdx); }
-                      }])
-                  }, (path: string) => path)
-                  Text('+')
-                    .width(36)
-                    .height(36)
-                    .fontSize(22)
-                    .fontColor('#1A73E8')
-                    .textAlign(TextAlign.Center)
-                    .backgroundColor('#F0F0F0')
-                    .borderRadius(4)
-                    .margin({ left: 3, right: 3 })
-                    .onClick(() => this.onEmojiAddTemplate())
-                }
-                .height(48)
-              }
-            }
-            .listDirection(Axis.Horizontal)
-            .scrollBar(BarState.Off)
-            .width('100%')
-            .height(48)
-
-            Row() {
-              Text(this.committedText.length > 0 ? this.committedText : '（无已上屏文字）')
-                .layoutWeight(3)
-                .height(40)
-                .fontSize(15)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .padding({ left: 8, right: 8 })
-                .backgroundColor('#F5F5F5')
-                .borderRadius(4)
-              Button('生成存图库')
-                .layoutWeight(2)
-                .height(40)
-                .fontSize(14)
-                .enabled(this.committedText.length > 0 && !this.emojiGenerating)
-                .onClick(() => this.onEmojiGenerateAndCopy())
-            }
-            .width('100%')
-            .height(44)
-
-            Canvas(this.emojiCanvasCtx)
-              .id('emojiCanvas')
+            Text(this.committedText.length > 0 ? this.committedText : '（请先输入文字）')
+              .height(44)
+              .fontSize(16)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .padding({ left: 12, right: 12 })
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .margin({ bottom: 16 })
+            Button('生成表情')
               .width(160)
-              .height(160)
-              .backgroundColor('#F0F0F0')
-              .onReady(() => this.onEmojiCanvasReady())
-
-            if (this.emojiToast.length > 0) {
-              Text(this.emojiToast)
-                .fontSize(13)
-                .fontColor('#1A73E8')
-                .margin({ top: 4 })
-            }
-
+              .height(48)
+              .fontSize(16)
+              .enabled(this.committedText.length > 0)
+              .onClick(() => this.onEmojiGenerateAndCopy())
           }
           .width('100%')
           .layoutWeight(1)

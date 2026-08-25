@@ -2,6 +2,8 @@
   "src": [
     "pages/Index",
     "pages/KeyboardPage",
-    "pages/EmojiSavePage"
+    "pages/EmojiSavePage",
+    "pages/EmojiAddTemplatePage",
+    "pages/EmojiGeneratePage"
   ]
 }
