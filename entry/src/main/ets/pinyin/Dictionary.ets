@@ -197,7 +197,7 @@ export function generateCandidates(digits: string): string[] {
     const arr = lookup(key);
     if (arr !== null) {
       for (const e of arr) {
-        const score = (e.word.length >= 2 ? e.freq + 100000 : e.freq) + getUserFreq(e.word) * 500;
+        const score = (e.word.length >= 2 ? e.freq + 30000 : e.freq * 0.3) + getUserFreq(e.word) * 500;
         const prev = scoreMap.get(e.word);
         if (prev === undefined || score > prev) {
           scoreMap.set(e.word, score);
@@ -217,7 +217,7 @@ export function generateCandidates(digits: string): string[] {
     const arr = lookup(syl);
     if (arr !== null) {
       for (const e of arr) {
-        const weighted = e.freq * 0.5 + getUserFreq(e.word) * 500;
+        const weighted = e.freq * 0.2 + getUserFreq(e.word) * 500;
         const prev = scoreMap.get(e.word);
         if (prev === undefined || weighted > prev) {
           scoreMap.set(e.word, weighted);
