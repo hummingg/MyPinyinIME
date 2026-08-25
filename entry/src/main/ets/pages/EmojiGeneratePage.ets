@@ -8,7 +8,7 @@ import { preferences } from '@kit.ArkData';
 
 const DOMAIN = 0x0000;
 const TAG = 'EmojiGeneratePage';
-const CANVAS_SIZE = 260;
+const CANVAS_SIZE = 400;
 
 @Entry
 @Component
@@ -73,7 +73,7 @@ struct EmojiGeneratePage {
       ctx.textAlign = 'center';
       const targetWidth = CANVAS_SIZE - 20;
       const maxWidth = CANVAS_SIZE - 16;
-      const maxFontSize = 120;
+      const maxFontSize = 180;
       const minFontSize = 20;
       let fontSize = 40;
       ctx.font = `${fontSize}px sans-serif`;
