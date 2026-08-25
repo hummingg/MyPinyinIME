@@ -20,7 +20,7 @@ struct EmojiGeneratePage {
   @State pixelMap: image.PixelMap | undefined = undefined;
   @State generating: boolean = false;
 
-  private presetTemplates: string[] = ['tpl_white.png', 'tpl_yellow.png', 'tpl_blue_grad.png', 'tpl_pink_grad.png', 'tpl_dark.png', 'tpl_green_grad.png'];
+  private presetTemplates: string[] = ['tpl_white.png'];
   private canvasCtx: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
 
   async aboutToAppear(): Promise<void> {
@@ -70,15 +70,51 @@ struct EmojiGeneratePage {
     }
     if (this.text.length > 0) {
       ctx.fillStyle = '#000000';
-      ctx.font = '28px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(this.text, CANVAS_SIZE / 2, CANVAS_SIZE / 2 + 10);
+      const targetWidth = CANVAS_SIZE - 20;
+      const maxWidth = CANVAS_SIZE - 16;
+      const maxFontSize = 120;
+      const minFontSize = 20;
+      let fontSize = 40;
+      ctx.font = `${fontSize}px sans-serif`;
+      let tw = ctx.measureText(this.text).width;
+      while (tw < targetWidth && fontSize < maxFontSize) {
+        fontSize += 2;
+        ctx.font = `${fontSize}px sans-serif`;
+        tw = ctx.measureText(this.text).width;
+      }
+      while (tw > maxWidth && fontSize > minFontSize) {
+        fontSize -= 2;
+        ctx.font = `${fontSize}px sans-serif`;
+        tw = ctx.measureText(this.text).width;
+      }
+      const lines: string[] = [];
+      if (tw > maxWidth) {
+        let cur = '';
+        for (let i = 0; i < this.text.length; i++) {
+          const test = cur + this.text[i];
+          if (ctx.measureText(test).width > maxWidth && cur.length > 0) {
+            lines.push(cur);
+            cur = this.text[i];
+          } else {
+            cur = test;
+          }
+        }
+        if (cur.length > 0) lines.push(cur);
+      } else {
+        lines.push(this.text);
+      }
+      const lineH = fontSize * 1.3;
+      let y = CANVAS_SIZE / 2 - (lines.length * lineH) / 2 + lineH / 2;
+      for (const line of lines) {
+        ctx.fillText(line, CANVAS_SIZE / 2, y);
+        y += lineH;
+      }
     }
   }
 
   private async onGenerate(): Promise<void> {
-    this.generating = true;
-    this.toast = '生成中...';
+
     try {
       await this.drawEmoji();
       const ctx = this.canvasCtx;
@@ -206,7 +242,7 @@ struct EmojiGeneratePage {
                 .height(48)
                 .border({ width: idx === this.templateIdx ? 2 : 0, color: '#1A73E8' })
                 .margin({ left: 4, right: 4 })
-                .onClick(() => { this.templateIdx = idx; this.onGenerate(); })
+                .onClick(() => { this.templateIdx = idx; this.drawEmoji(); })
             }, (tpl: string) => tpl)
             ForEach(this.userTemplates, (path: string, uIdx: number) => {
               Image('file://' + path)
@@ -214,7 +250,7 @@ struct EmojiGeneratePage {
                 .height(48)
                 .border({ width: this.presetTemplates.length + uIdx === this.templateIdx ? 2 : 0, color: '#1A73E8' })
                 .margin({ left: 4, right: 4 })
-                .onClick(() => { this.templateIdx = this.presetTemplates.length + uIdx; this.onGenerate(); })
+                .onClick(() => { this.templateIdx = this.presetTemplates.length + uIdx; this.drawEmoji(); })
                 .bindMenu([{ value: '删除', action: (): void => { this.onDeleteTemplate(uIdx); } }])
             }, (path: string) => path)
             Text('+')
