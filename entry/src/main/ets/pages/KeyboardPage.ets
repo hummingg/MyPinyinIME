@@ -23,6 +23,9 @@ struct KeyboardPage {
   @State showPicker: boolean = false;
   @State pickerChars: string[] = [];
   @State pickerIndex: number = 0;
+  // 符号面板状态
+  @State showSymbolPanel: boolean = false;
+  @State symbolPage: number = 0;
   private touchStartX: number = 0;
   private readonly pickerCellWidth: number = 13;
   private readonly pickerRenderWidth: number = 28;
@@ -37,7 +40,23 @@ struct KeyboardPage {
     [['。', '', 'punct'], ['4', 'ghi', 'digit'], ['5', 'jkl', 'digit'], ['6', 'mno', 'digit'], ['清空', '', 'clear']],
     [['？', '', 'punct'], ['7', 'pqrs', 'digit'], ['8', 'tuv', 'digit'], ['9', 'wxyz', 'digit'], ['⏎', '', 'enter']]
   ];
-  private symbols: string[] = ['～', '·', '°', '±', '×', '÷', '√', '≈', '≠', '≤', '≥', '《', '》', '「', '」', '『', '』', '〔', '〕', '‰', '℃', '￥', '＄', '€', '§', '★', '○', '●', '◇', '◆', '□', '■', '△', '▲', '※', '→', '←', '↑', '↓', '⇒', '⇔', '∈', '∏', '∑', '∞', '∠', '⊥', '⊕', '⊗'];
+  // 符号分页：标点 / 数学 / 特殊，每页30个（6列×5行）
+  private symbolPages: Array<Array<string>> = [
+    ['，', '。', '？', '！', '、', '；', '：', '"', '"', '\'', '\'', '（', '）', '【', '】', '《', '》', '「', '」', '『', '』', '…', '—', '～', '·', '°', '％', '＆', '＊', '＠'],
+    ['＋', '－', '×', '÷', '＝', '±', '≈', '≠', '≤', '≥', '√', '∑', '∏', '∞', '∠', '⊥', 'π', '‰', '℃', '∫', '∂', '∇', '∝', '≡', '∈', '∪', '∩', '⊕', '⊗', '∀'],
+    ['￥', '＄', '€', '￡', '¥', '§', '★', '○', '●', '◇', '◆', '□', '■', '△', '▲', '※', '→', '←', '↑', '↓', '⇒', '⇔', '∃', '∅', '∴', '∵', '⊕', '⊗', '∩', '∪']
+  ];
+  // 英文标点（半角）
+  private enPunctuation: string[] = [',', '.', '?', '!', ';', ':', '\'', '"', '(', ')', '[', ']', '{', '}', '<', '>', '/', '\\', '|', '-', '_', '+', '=', '*', '&', '%', '$', '#', '@', '~'];
+  private symbolPageNames: string[] = ['标点', '数学', '特殊'];
+
+  // 当前符号页数据（标点页根据中英文模式切换全角/半角）
+  private currentSymbolPage(): string[] {
+    if (this.symbolPage === 0) {
+      return this.isChinese ? this.symbolPages[0] : this.enPunctuation;
+    }
+    return this.symbolPages[this.symbolPage];
+  }
 
   // 生成滑动选择字符列表：数字 + 小写字母 + 大写字母
   private getPickerChars(d: string): string[] {
@@ -203,7 +222,17 @@ struct KeyboardPage {
 
   private onSymbol(): void {
     this.inputDigits = '';
-    this.candidates = this.symbols.slice();
+    this.candidates = [];
+    this.showSymbolPanel = true;
+    this.symbolPage = 0;
+  }
+
+  private onSymbolClick(s: string): void {
+    this.commitText(s);
+  }
+
+  private onSymbolBack(): void {
+    this.showSymbolPanel = false;
   }
 
   private onLangSwitch(): void {
@@ -331,8 +360,9 @@ struct KeyboardPage {
         .backgroundColor('#F5F5F5')
       }
 
-      // 主键盘三行（每行5键）
-      ForEach(this.kbRows, (row: Array<[string, string, string]>) => {
+      if (!this.showSymbolPanel) {
+        // 主键盘三行（每行5键）
+        ForEach(this.kbRows, (row: Array<[string, string, string]>) => {
         Row() {
           ForEach(row, (key: [string, string, string]) => {
             Column() {
@@ -403,6 +433,47 @@ struct KeyboardPage {
       }
       .width('100%')
       .height(44)
+      } else {
+        // 符号面板：分页标签 + 6×5网格
+        Row() {
+          ForEach(this.symbolPageNames, (name: string, idx: number) => {
+            Text(name)
+              .layoutWeight(1)
+              .height(44)
+              .textAlign(TextAlign.Center)
+              .fontSize(15)
+              .fontColor(idx === this.symbolPage ? '#1A73E8' : '#666666')
+              .backgroundColor(idx === this.symbolPage ? '#E8F0FE' : '#EEEEEE')
+              .onClick(() => this.symbolPage = idx)
+          }, (name: string, idx: number) => `${name}${idx}`)
+          Text('返回')
+            .layoutWeight(1)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .fontSize(15)
+            .backgroundColor('#EEEEEE')
+            .onClick(() => this.onSymbolBack())
+        }
+        .width('100%')
+        .height(44)
+
+        Grid() {
+          ForEach(this.currentSymbolPage(), (s: string, idx: number) => {
+            GridItem() {
+              Text(s)
+                .fontSize(20)
+                .fontColor('#222222')
+                .textAlign(TextAlign.Center)
+            }
+            .backgroundColor('#FFFFFF')
+            .onClick(() => this.onSymbolClick(s))
+          }, (s: string, idx: number) => `${s}${idx}`)
+        }
+        .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr')
+        .rowsTemplate('1fr 1fr 1fr 1fr 1fr')
+        .width('100%')
+        .layoutWeight(1)
+      }
     }
     .width('100%')
     .height('100%')
