@@ -52,6 +52,13 @@ function splitDigits(digits: string, pos: number, cur: string[], out: string[][]
     }
     return;
   }
+  // 隔音符 "'" 强制断开音节
+  if (digits[pos] === "'") {
+    cur.push("'");
+    splitDigits(digits, pos + 1, cur, out, maxOut);
+    cur.pop();
+    return;
+  }
   // 尝试所有可能的音节长度（1~6 位）
   for (let len = 1; len <= 6 && pos + len <= digits.length; len++) {
     const code = digits.substring(pos, pos + len);

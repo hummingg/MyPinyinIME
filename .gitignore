@@ -17,3 +17,5 @@
 *.hap
 *.hsp
 /.deveco
+.DS_Store
+**/.DS_Store

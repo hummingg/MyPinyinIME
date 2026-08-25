@@ -140,14 +140,17 @@ export function generateCandidates(digits: string): string[] {
   const plans = digitsToSyllablePlans(digits);
   const scoreMap = new Map<string, number>();
 
-  // 词候选（完整拼音匹配，原权重）
+  // 词候选（完整拼音匹配，去隔音符查 key）
+  // 多字词加基础分 100000 优先于单字词（如"西安"优先于"先"）
   for (const py of pinyins) {
-    const arr = lookup(py);
+    const key = py.replace(/'/g, '');
+    const arr = lookup(key);
     if (arr !== null) {
       for (const e of arr) {
+        const score = e.word.length >= 2 ? e.freq + 100000 : e.freq;
         const prev = scoreMap.get(e.word);
-        if (prev === undefined || e.freq > prev) {
-          scoreMap.set(e.word, e.freq);
+        if (prev === undefined || score > prev) {
+          scoreMap.set(e.word, score);
         }
       }
     }
@@ -156,7 +159,7 @@ export function generateCandidates(digits: string): string[] {
   // 单字候选（第一个音节，降权 0.5，让词优先）
   const firstSyllables = new Set<string>();
   for (const plan of plans) {
-    if (plan.length > 0) {
+    if (plan.length > 0 && plan[0] !== "'") {
       firstSyllables.add(plan[0]);
     }
   }
@@ -180,5 +183,5 @@ export function generateCandidates(digits: string): string[] {
     const fb = scoreMap.get(b) as number;
     return fb - fa;
   });
-  return words.slice(0, 12);
+  return words;
 }

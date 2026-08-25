@@ -6,6 +6,7 @@
 //   符号 中/英 0 123
 import { ImeState } from '../inputmethod/InputMethodService';
 import { generateCandidates } from '../pinyin/Dictionary';
+import { digitsToPinyins } from '../pinyin/T9';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import display from '@ohos.display';
 
@@ -32,7 +33,7 @@ struct KeyboardPage {
   };
   // 主键盘三行：[label, sub, action]
   private kbRows: Array<Array<[string, string, string]>> = [
-    [['，', '', 'punct'], ['1', '', 'digit'], ['2', 'abc', 'digit'], ['3', 'def', 'digit'], ['删除', '', 'delete']],
+    [['，', '', 'punct'], ['1', '分词', 'digit'], ['2', 'abc', 'digit'], ['3', 'def', 'digit'], ['删除', '', 'delete']],
     [['。', '', 'punct'], ['4', 'ghi', 'digit'], ['5', 'jkl', 'digit'], ['6', 'mno', 'digit'], ['清空', '', 'clear']],
     [['？', '', 'punct'], ['7', 'pqrs', 'digit'], ['8', 'tuv', 'digit'], ['9', 'wxyz', 'digit'], ['⏎', '', 'enter']]
   ];
@@ -52,6 +53,15 @@ struct KeyboardPage {
       result.push(ch.toUpperCase());
     }
     return result;
+  }
+
+  // 候选栏显示的拼音（解析后带隔音符，如 xi'an）
+  private displayPinyin(): string {
+    if (this.inputDigits.length === 0) {
+      return '';
+    }
+    const pys = digitsToPinyins(this.inputDigits);
+    return pys.length > 0 ? pys.slice(0, 4).join('  ') : this.inputDigits;
   }
 
   private commitText(text: string): void {
@@ -143,6 +153,14 @@ struct KeyboardPage {
       if (d >= '2' && d <= '9') {
         this.inputDigits += d;
         this.candidates = generateCandidates(this.inputDigits);
+      } else if (d === '1') {
+        // 中文模式 1 作为隔音符（分词），如 xi'an
+        if (this.inputDigits.length > 0) {
+          this.inputDigits += "'";
+          this.candidates = generateCandidates(this.inputDigits);
+        } else {
+          this.commitText('1');
+        }
       } else {
         this.commitText(d);
       }
@@ -200,6 +218,33 @@ struct KeyboardPage {
     this.candidates = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
   }
 
+  // 英文模式0键滑动选择：0 / 空格
+  private onZeroTouch(event: TouchEvent): void {
+    if (this.isChinese) {
+      if (event.type === TouchType.Up) {
+        this.onSpace();
+      }
+      return;
+    }
+    if (event.type === TouchType.Down) {
+      this.touchStartX = event.touches[0].screenX;
+      this.pickerChars = ['0', ' '];
+      this.pickerIndex = 1;
+      this.showPicker = true;
+    } else if (event.type === TouchType.Move) {
+      const deltaX = event.touches[0].screenX - this.touchStartX;
+      const newIndex = 1 + Math.round(deltaX / this.pickerCellWidth);
+      this.pickerIndex = Math.max(0, Math.min(newIndex, this.pickerChars.length - 1));
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (this.showPicker && this.pickerChars.length > 0) {
+        this.commitText(this.pickerChars[this.pickerIndex]);
+      }
+      this.showPicker = false;
+      this.pickerChars = [];
+      this.pickerIndex = 0;
+    }
+  }
+
   // 英文模式滑动选择：onTouch 绑定单个键，手指滑出按键时 Cancel 提交当前字母
   private onDigitTouch(event: TouchEvent, d: string): void {
     if (this.isChinese) {
@@ -230,7 +275,7 @@ struct KeyboardPage {
       if (this.showPicker) {
         Row() {
           ForEach(this.pickerChars, (ch: string, index: number) => {
-            Text(ch)
+            Text(ch === ' ' ? '空格' : ch)
               .fontSize(index === this.pickerIndex ? 18 : 14)
               .fontWeight(index === this.pickerIndex ? FontWeight.Bold : FontWeight.Normal)
               .fontColor(index === this.pickerIndex ? '#FFFFFF' : '#666666')
@@ -251,7 +296,7 @@ struct KeyboardPage {
         List({ space: 0 }) {
           if (this.inputDigits.length > 0) {
             ListItem() {
-              Text(this.inputDigits)
+              Text(this.displayPinyin())
                 .fontSize(13)
                 .fontColor('#888888')
                 .padding({ left: 10, right: 6 })
@@ -291,15 +336,20 @@ struct KeyboardPage {
         Row() {
           ForEach(row, (key: [string, string, string]) => {
             Column() {
-              Text(key[0])
-                .fontSize(key[2] === 'punct' || key[2] === 'delete' || key[2] === 'clear' || key[2] === 'enter' ? 18 : 22)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#222222')
               if (key[1].length > 0) {
-                Text(key[1])
+                Text(key[0])
                   .fontSize(10)
                   .fontColor('#999999')
-                  .margin({ top: 2 })
+                Text(key[1])
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#222222')
+                  .margin({ top: 1 })
+              } else {
+                Text(key[0])
+                  .fontSize(18)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#222222')
               }
             }
             .layoutWeight(1)
@@ -319,7 +369,7 @@ struct KeyboardPage {
         .layoutWeight(1)
       }, (row: Array<[string, string, string]>) => row[0][0])
 
-      // 底部功能栏：符号 中/英 0 123
+      // 底部功能栏：符号 中/英 0
       Row() {
         Text('符号')
           .layoutWeight(1)
@@ -335,21 +385,21 @@ struct KeyboardPage {
           .fontSize(16)
           .backgroundColor('#EEEEEE')
           .onClick(() => this.onLangSwitch())
-        Text('0')
+        Column() {
+          Text('0')
+            .fontSize(10)
+            .fontColor('#999999')
+          Text('空格')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#222222')
+            .margin({ top: 1 })
+        }
           .layoutWeight(1)
           .height(44)
-          .textAlign(TextAlign.Center)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
+          .justifyContent(FlexAlign.Center)
           .backgroundColor('#F5F5F5')
-          .onClick(() => this.onSpace())
-        Text('123')
-          .layoutWeight(1)
-          .height(44)
-          .textAlign(TextAlign.Center)
-          .fontSize(15)
-          .backgroundColor('#EEEEEE')
-          .onClick(() => this.onNumSwitch())
+          .onTouch((event: TouchEvent) => this.onZeroTouch(event))
       }
       .width('100%')
       .height(44)
