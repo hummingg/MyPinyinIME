@@ -5,7 +5,7 @@
 //   ？  7  8  9  ⏎
 //   符号 中/英 0 123
 import { ImeState } from '../inputmethod/InputMethodService';
-import { generateCandidates } from '../pinyin/Dictionary';
+import { generateCandidates, recordUserWord } from '../pinyin/Dictionary';
 import { digitsToPinyins } from '../pinyin/T9';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import display from '@ohos.display';
@@ -193,6 +193,7 @@ struct KeyboardPage {
     this.commitText(word);
     this.inputDigits = '';
     this.candidates = [];
+    recordUserWord(word);
   }
 
   private onSpace(): void {

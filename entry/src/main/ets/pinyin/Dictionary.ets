@@ -5,6 +5,7 @@ import { digitsToPinyins, digitsToSyllablePlans } from './T9';
 import { common } from '@kit.AbilityKit';
 import buffer from '@ohos.buffer';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { preferences } from '@kit.ArkData';
 
 const DOMAIN = 0x0500;
 const TAG = 'Dictionary';
@@ -87,6 +88,53 @@ let rimeDict: Map<string, WordFreq[]> | null = null;
 let rimeLoaded = false;
 let rimeLoading = false;
 
+// 用户词频：用户选过的词自动加分，持久化存储
+let userFreqMap: Map<string, number> = new Map();
+let userPrefsStore: preferences.Preferences | null = null;
+
+async function loadUserFreq(context: common.Context): Promise<void> {
+  try {
+    const store = await preferences.getPreferences(context, 'user_dict');
+    userPrefsStore = store;
+    const raw = await store.get('data', '{}') as string;
+    const parsed: Object = JSON.parse(raw);
+    const keys = Object.keys(parsed);
+    for (const k of keys) {
+      userFreqMap.set(k, (parsed as Record<string, number>)[k]);
+    }
+    hilog.info(DOMAIN, TAG, 'user freq loaded, words=%{public}d', userFreqMap.size);
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'load user freq failed: %{public}s', JSON.stringify(e));
+  }
+}
+
+async function saveUserFreq(): Promise<void> {
+  if (userPrefsStore === null) {
+    return;
+  }
+  try {
+    const data: Record<string, number> = {};
+    userFreqMap.forEach((v: number, k: string) => {
+      data[k] = v;
+    });
+    await userPrefsStore.put('data', JSON.stringify(data));
+    await userPrefsStore.flush();
+  } catch (e) {
+    hilog.warn(DOMAIN, TAG, 'save user freq failed');
+  }
+}
+
+export function recordUserWord(word: string): void {
+  const prev = userFreqMap.get(word) || 0;
+  userFreqMap.set(word, prev + 1);
+  saveUserFreq();
+  hilog.info(DOMAIN, TAG, 'record user word: %{public}s (%{public}d)', word, prev + 1);
+}
+
+function getUserFreq(word: string): number {
+  return userFreqMap.get(word) || 0;
+}
+
 // 从 rawfile/dict.json 异步加载 rime 词库（仅加载一次）
 export async function initRimeDict(context: common.Context): Promise<void> {
   if (rimeLoaded || rimeLoading) {
@@ -116,6 +164,8 @@ export async function initRimeDict(context: common.Context): Promise<void> {
   } finally {
     rimeLoading = false;
   }
+  // 加载用户词频（独立于 rime 词库）
+  await loadUserFreq(context);
 }
 
 // 查询某拼音的候选词（优先 rime，兜底 fallback）
@@ -147,7 +197,7 @@ export function generateCandidates(digits: string): string[] {
     const arr = lookup(key);
     if (arr !== null) {
       for (const e of arr) {
-        const score = e.word.length >= 2 ? e.freq + 100000 : e.freq;
+        const score = (e.word.length >= 2 ? e.freq + 100000 : e.freq) + getUserFreq(e.word) * 500;
         const prev = scoreMap.get(e.word);
         if (prev === undefined || score > prev) {
           scoreMap.set(e.word, score);
@@ -167,7 +217,7 @@ export function generateCandidates(digits: string): string[] {
     const arr = lookup(syl);
     if (arr !== null) {
       for (const e of arr) {
-        const weighted = e.freq * 0.5;
+        const weighted = e.freq * 0.5 + getUserFreq(e.word) * 500;
         const prev = scoreMap.get(e.word);
         if (prev === undefined || weighted > prev) {
           scoreMap.set(e.word, weighted);
