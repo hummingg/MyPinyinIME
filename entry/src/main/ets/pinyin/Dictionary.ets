@@ -191,13 +191,13 @@ export function generateCandidates(digits: string): string[] {
   const scoreMap = new Map<string, number>();
 
   // 词候选（完整拼音匹配，去隔音符查 key）
-  // 多字词加基础分 100000 优先于单字词（如"西安"优先于"先"）
+  // 多字词按词频 ×2 比例加成（非固定加分），避免低频多字词压制高频单字
   for (const py of pinyins) {
     const key = py.replace(/'/g, '');
     const arr = lookup(key);
     if (arr !== null) {
       for (const e of arr) {
-        const score = (e.word.length >= 2 ? e.freq + 30000 : e.freq * 0.3) + getUserFreq(e.word) * 500;
+        const score = (e.word.length >= 2 ? e.freq * 2 : e.freq * 0.3) + getUserFreq(e.word) * 500;
         const prev = scoreMap.get(e.word);
         if (prev === undefined || score > prev) {
           scoreMap.set(e.word, score);
